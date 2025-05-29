@@ -251,6 +251,52 @@ def act_layer(act, inplace=False, neg_slope=0.2, n_prelu=1):
         raise NotImplementedError('activation layer [%s] is not found' % act)
     return layer
 
+class ChannelGatev2(nn.Module):
+    """A mini-network that generates channel-wise gates conditioned on input tensor."""
+    def __init__(
+            self,
+            in_channels,
+            num_gates=None,
+            return_gates=False,
+            gate_activation='sigmoid',
+    ):
+        super(ChannelGatev2, self).__init__()
+        if num_gates is None:
+            num_gates = in_channels
+        self.return_gates = return_gates
+        self.global_avgpool = nn.AdaptiveAvgPool2d(1)
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        # ECA的部分
+        self.k = kernel_size(in_channels)
+
+        self.channel_conv1 = nn.Conv1d(1, 1, kernel_size=self.k, padding=self.k // 2)
+        if gate_activation == 'sigmoid':
+            self.gate_activation = nn.Sigmoid()
+        elif gate_activation == 'relu':
+            self.gate_activation = nn.ReLU(inplace=True)
+        elif gate_activation == 'linear':
+            self.gate_activation = None
+        else:
+            raise RuntimeError(
+                "Unknown gate activation: {}".format(gate_activation)
+            )
+        att_kernel = 7
+        att_padding = att_kernel // 2
+        self.s_att = nn.Conv2d(in_channels, in_channels, 7, 1, att_padding, groups=in_channels,
+                               bias=False)
+        self.gate_fn = nn.Sigmoid()
+
+    def forward(self, x):
+        input = x
+        channel_pool1 = self.global_avgpool(x).squeeze(-1).transpose(1, 2)
+        x_c = self.channel_conv1(channel_pool1).transpose(1, 2).unsqueeze(-1)  # b,1,c
+        x_hw = self.s_att(input)
+        x = x_c + x_hw
+        if self.gate_activation is not None:
+            x = self.gate_activation(x)
+        if self.return_gates:
+            return x
+        return input * x + input
 
 class ChannelGate(nn.Module):
     """A mini-network that generates channel-wise gates conditioned on input tensor."""
